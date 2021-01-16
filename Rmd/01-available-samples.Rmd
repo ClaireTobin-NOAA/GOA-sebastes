@@ -1,0 +1,48 @@
+---
+title: "Available sebastes samples"
+output: html_notebook
+---
+
+Taking a look at data from Ali Deary...
+
+```{r load-data-and-libraries}
+library(tidyverse)
+
+rockfish_df <- readxl::read_xlsx("../data/genetics_rockfish_specimen_list.xlsx", sheet = 2)
+
+```
+
+I think the variables that I want to play with are:
+Year
+Month
+Station
+Number
+
+The Max.Gear.Depth and Bottom.Depth could also be interesting, but maybe will be correlated to the Station?
+
+```{r}
+rockfish_df %>%
+  select(Year, Month, Station, Number) %>%
+  ggplot() +
+  geom_bar(aes(x = Month, y = Number, fill = Station), stat = "identity") +
+  facet_grid(cols = vars(Year)) +
+  guides(fill = F) +
+  theme_bw() +
+  ylab("n samples")
+
+```
+
+Maybe there's binning that could happen, both at the temporal level (months 4-5 vs. 7-8, e.g.) and at the spatial level, depending on station locations?
+```{r}
+rockfish_df %>%
+  select(Year, Month, Station, Number) %>%
+  filter(Month %in% c(4,5)) %>%
+  ggplot() +
+  geom_bar(aes(x = Month, y = Number, fill = Station), stat = "identity") +
+  facet_grid(cols = vars(Year), rows = vars(Station)) + # modify this for only stations for multiple entries
+  guides(fill = F) +
+  theme_bw() +
+  ylab("n samples")
+
+```
+
