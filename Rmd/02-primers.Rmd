@@ -1,0 +1,89 @@
+---
+title: "primers"
+output: html_notebook
+---
+
+1-Feb-2021
+
+Organizing sequence info for the primers for rockfish species ID based on data from Chapter 3 of my PhD.
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(hablar)
+```
+
+
+```{r which-loci}
+# the 96 loci used for the kelp rockfish pedigrees
+loci <- read_xlsx("~/Documents/AukeBayLab/Kelp_rockfish_manuscript_tables_01_22_19.xlsx", sheet = "Supplemental_Tb_1", skip = 1) %>%
+  filter(!is.na(Locus)) %>%
+  filter(Locus != "* locus removed due to null alleles with z-score > 3 or non-Mendelian inheritance pattern") # clean up
+
+# minus the six loci that are removed for species ID
+spp_id_loci <- loci %>%
+  filter(is.na(`notes for species ID (2/1/2021)`)) 
+
+# remove asterisks
+spp_id_loci$Locus <- stringr::str_replace(spp_id_loci$Locus, '\\*', '')
+  
+
+# those are the 90 loci for species ID
+spp_id90 <- spp_id_loci %>%
+  select(Locus)
+```
+
+
+```{r locus-seqs-for-gtseq}
+# # Here are the spreadsheets for prepping a GTseq order
+# fwd_seqs <- read_xlsx("~/Documents/AukeBayLab/GTseq_Sebastes_02012021.xlsx", sheet = "pcr1_forward")
+# rev_seqs <- read_xlsx("~/Documents/AukeBayLab/GTseq_Sebastes_02012021.xlsx", sheet = "pcr1_reverse")
+# 
+# # select just the sequence info for the 90 loci
+# fwd_seqs %>%
+#   inner_join(., spp_id_loci, by = c("locus name" = "Locus"))
+```
+
+
+```{r}
+# primers for all 192, FWD and REV
+locs_seqs <- read_csv("~/Documents/AukeBayLab/Sebastes_192_loci_seqs.csv")
+
+sequences <- locs_seqs %>%
+  separate(Locus, into = c("kelp", "tag", "direction"), remove = F) %>%
+  unite(2:3, col = "Locus", sep = "_", remove = F) %>%
+  unite(2,4, col = "name", sep = "_", remove = F) %>%
+  select(-kelp) %>%
+  convert(num(tag)) %>%
+  rename(gtseq_primer = Primer) %>%
+  mutate(locus_primer = gtseq_primer)
+
+# remove white space in sequences
+#Primer <- names(sequences)[vapply(sequences, is.character, logical(1))]
+#sequences[,Primer] <- lapply(sequences[,Primer], trimws)
+
+sequences$locus_primer <- str_remove(sequences$locus_primer, "GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT")
+sequences$locus_primer <- str_remove(sequences$locus_primer, "CGACAGGTTCAGAGTTCTACAGTCCGACGATC")
+
+sequences
+```
+
+Combined the formatted primers with the subset of 90 loci:
+```{r}
+loc_90_seqs <- sequences %>%
+  right_join(., spp_id90) %>%
+  arrange(direction, tag)
+
+# remove whitespace from the string  
+#loc_90_seqs$Primer <- str_squish(loc_90_seqs$Primer)
+
+# save that for the IDT order
+loc_90_seqs %>%
+  write_csv("~/Documents/AukeBayLab/sebastes_sppID_90_loci.csv")
+```
+
+
+
+
+
