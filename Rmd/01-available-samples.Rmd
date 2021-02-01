@@ -7,9 +7,25 @@ Taking a look at data from Ali Deary...
 
 ```{r load-data-and-libraries}
 library(tidyverse)
+library(marmap)
+library(hablar)
+library(gridExtra)
+library(sf)
+library(sp)
+library(adehabitatHR)
 
-rockfish_df <- readxl::read_xlsx("../data/genetics_rockfish_specimen_list.xlsx", sheet = 2)
+rockfish_df <- readxl::read_xlsx("../data/genetics_rockfish_specimen_list.xlsx", sheet = 2) %>%
+  rename(lat = Lat., lon = Long.)
 
+```
+
+
+
+```{r}
+devtools::install_github("ropensci/rnaturalearthdata")
+install.packages("rnaturalearthhires",
+                 repos = "http://packages.ropensci.org",
+                 type = "source")
 ```
 
 I think the variables that I want to play with are:
@@ -22,7 +38,7 @@ The Max.Gear.Depth and Bottom.Depth could also be interesting, but maybe will be
 
 ```{r}
 rockfish_df %>%
-  select(Year, Month, Station, Number) %>%
+  dplyr::select(Year, Month, Station, Number) %>%
   ggplot() +
   geom_bar(aes(x = Month, y = Number, fill = Station), stat = "identity") +
   facet_grid(cols = vars(Year)) +
@@ -35,14 +51,535 @@ rockfish_df %>%
 Maybe there's binning that could happen, both at the temporal level (months 4-5 vs. 7-8, e.g.) and at the spatial level, depending on station locations?
 ```{r}
 rockfish_df %>%
-  select(Year, Month, Station, Number) %>%
-  filter(Month %in% c(4,5)) %>%
-  ggplot() +
-  geom_bar(aes(x = Month, y = Number, fill = Station), stat = "identity") +
-  facet_grid(cols = vars(Year), rows = vars(Station)) + # modify this for only stations for multiple entries
-  guides(fill = F) +
-  theme_bw() +
-  ylab("n samples")
+  dplyr::select(Year, Month, Station, Number) %>%
+  group_by(Station) %>%
+  add_tally(name = "n_samples_per_station")
+# unfortunately, there are no more than 2 samples per station
 
+# let's look at the spatial distribution of stations?
+```
+
+## Working with spatial data
+
+https://www.r-spatial.org/r/2018/10/25/ggplot2-sf.html
+```{r}
+library("ggplot2")
+theme_set(theme_bw())
+library("sf")
+
+library("rnaturalearth")
+library("rnaturalearthdata")
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+
+ggplot(data = world) +
+    geom_sf() +
+    coord_sf(crs = "+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +units=m +no_defs ")
+
+```
+```{r}
+#plot stations lat/lon
+plot(rockfish_df$lon, rockfish_df$lat, asp = 1, cex = 0.5, pch = 19)
+  
+```
+
+```{r}
+# antimeridian region 
+aleu <- getNOAA.bathy(175, -135, 50, 65, resolution = 4,
+antimeridian = TRUE)
+
+# Make it a raster
+bathy <- as.raster(aleu)
+
+# Create a xyz table for ggplot
+bath<-fortify(aleu)
+```
+
+
+```{r}
+library(oce)
+library(ocedata)
+data("coastlineWorldFine")
+
+# convert bathymetry
+bathyLon = as.numeric(rownames(aleu))
+bathyLat = as.numeric(colnames(aleu))
+bathyZ = as.numeric(aleu)
+dim(bathyZ) = dim(aleu)
+
+#filter NAs
+rockfish_spatial_df <- rockfish_df %>%
+  filter(!is.na(lon))
+
+# define plotting region
+mlon = mean(rockfish_spatial_df$lon)
+mlat = mean(rockfish_spatial_df$lat)
+span = 2000
+```
+
+
+Plot it up
+```{r plot}
+# set colors to the Station identity
+rockfish_spatial_df %>%
+  dplyr::select(Station) %>%
+  unique()
+
+library(RColorBrewer)
+# Define the number of colors you want
+nb.cols <- 101
+mycolors <- colorRampPalette(brewer.pal(8, "Set2"))(nb.cols)
+# Create a ggplot with 101 colors
+```
+
+
+```{r plot-station-locs}
+# set up the output
+pdf("pdf_outputs/station_map.pdf", width = 8, height = 6)
+
+# plot station locations
+plot(coastlineWorldFine, clon = mlon, clat = mlat, span = 1100, 
+     projection="+proj=aea +lat_1=55 +lat_2=65 +lat_0=50 +lon_0=-154", col = 'lightgrey')
+
+# plot bathymetry
+mapContour(bathyLon, bathyLat, bathyZ,
+           levels = c(-500, -1000, -2500),
+           lwd = c(1.5, 1, 1),
+           lty = c(3, 1, 3),
+           col = 'darkgray')
+
+# add depth legend
+#legend("topright", seg.len = 3, cex = 0.7,
+#        lwd = c(1.5, 1, 1),
+#        lty = c(3, 1, 3),
+#        legend = c("-500", "-1000", "-2500"),
+#        box.col = "white", col = 'darkgray', title = "Depth (m)", bg = "white")
+
+# add map data
+# add colony locations
+mapPoints(longitude = rockfish_spatial_df$lon, latitude = rockfish_spatial_df$lat, pch = 19, col = mycolors, cex = 0.5, lwd = 2)
+#text(longitude = rockfish_spatial_df$lon, latitude = rockfish_spatial_df$lat, rockfish_spatial_df$Station, pos=4)
+
+dev.off()
+```
+
+Save that map as an object to add to my grid?
+```{r}
+# grid libraries
+library(gridExtra)
+library(gridGraphics)
+library(grid)
+
+# plot station locations
+plot(coastlineWorldFine, clon = mlon, clat = mlat, span = 1100, 
+     projection="+proj=aea +lat_1=55 +lat_2=65 +lat_0=50 +lon_0=-154", col = 'lightgrey')
+
+# plot bathymetry
+mapContour(bathyLon, bathyLat, bathyZ,
+           levels = c(-500, -1000, -2500),
+           lwd = c(1.5, 1, 1),
+           lty = c(3, 1, 3),
+           col = 'darkgray')
+
+# add locations
+mapPoints(longitude = rockfish_spatial_df$lon, latitude = rockfish_spatial_df$lat, pch = 19, col = mycolors, cex = 0.5, lwd = 2)
+# to save as an object
+grid.echo()
+map.fig <- grid.grab()
+
+# let's see if that works to add into the panel of plots
+```
+
+
+```{r}
+rockfish_spatial_df %>%
+  ggplot() +
+  geom_point(aes(x = lon, y = lat, color = Station)) +
+  #geom_text(aes(x = lon, y = lat, label = Station)) +
+  ggrepel::geom_text_repel(aes(x = lon, y = lat, label = Station)) +
+  guides(color = F)
+
+ggsave("pdf_outputs/station_labeled_plot.pdf", width = 10, height = 6)
+```
+
+How to create defined clusters from this data?
+
+https://rpubs.com/aephidayatuloh/clustervisual
+```{r}
+# kmeans method
+
+rock_cluster <- rockfish_spatial_df %>%
+  dplyr::select(lat, lon)
+
+cls <- kmeans(x = rock_cluster, centers = 6)
+rock_cluster$cluster <- as.character(cls$cluster)
+head(rock_cluster)
+
+
+ggplot() +
+  geom_point(data = rock_cluster, 
+             mapping = aes(x = lon, 
+                                  y = lat, 
+                                  colour = cluster))
+```
+
+http://www.supplychaindataanalytics.com/proximity-based-spatial-customer-grouping-in-r/
+
+Use K-means clustering, but first define starting points based on the longitude dimensions of the spatial dataset
+```{r}
+# define a fct
+initial_centers <- function(stations,centers){
+  quantiles <- c()
+  for(i in 1:centers){
+    quantiles <- c(quantiles,i*as.integer(nrow(stations)/centers))
+  }
+  quantiles
+}
+
+```
+
+```{r}
+cluster_obj <- kmeans(rock_cluster,centers=rock_cluster[initial_centers(rock_cluster,6),])
+head(cluster_obj)
+```
+
+
+```{r}
+result_df <- rock_cluster
+result_df$group <- cluster_obj$cluster
+head(result_df)
+
+result_df <- result_df %>%
+  convert(., chr(group))
+
+```
+
+
+```{r}
+grp_rockfish_df <- result_df %>%
+  left_join(., rockfish_spatial_df, by = c("lat", "lon")) 
+
+station_locs_plot <- grp_rockfish_df %>%
+  ggplot() +
+  geom_point(aes(x = lon, y = lat, color = group)) +
+  #geom_text(aes(x = lon, y = lat, label = Station)) +
+ ggrepel::geom_text_repel(aes(x = lon, y = lat, label = Station)) +
+  #guides(color = F) 
+  ylab("Latitude") +
+  xlab("Longitude") +
+  theme(
+    legend.position = "top"
+  )
+
+station_locs_plot
+```
+
+Okay, so if I use these 6 groups, what kind of temporal coverage do I get?
+
+What about by month?
+```{r}
+# make month a factor
+grp_rockfish_df$Month <- factor(grp_rockfish_df$Month)
+
+# count the data
+count_data = count(grp_rockfish_df, Month, group, Year, Number)
+# fill in the missing combination
+count_data = complete(count_data, Month, group, Year, Number) 
+
+count_data %>%
+  arrange(Year)
+```
+
+```{r}
+# set month names for labeling?
+month.labs <- c("April", "May", "June", "August")
+names(month.labs) <- c("4","5","6","8")
+
+# plot number of samples by station group, month, and year
+samples_mo_yr_station_facet <- grp_rockfish_df %>%
+  dplyr::select(Month, group, Year, Number) %>%
+  count(Month, group, Year, Number) %>%
+  complete(Month, Year, group) %>%
+  ggplot(aes(x = group, y = Number, fill = group)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  #facet_grid(rows = vars(Year), cols = vars(Month), labeller = labeller(.cols = label_both)) +
+  facet_grid(rows = vars(Year), cols = vars(Month), labeller = labeller(Month = month.labs), scales = "free_y") +
+  guides(fill = F) +
+  xlab("Station group") +
+  ylab("Number of samples") #+
+  #theme(
+   # legend.position = "bottom"
+  #)
+
+#ggsave("pdf_outputs/rockfish_samples_by_month_year_grp.pdf", height = 6, width = 7)
+```
+
+Now, the thing to do is combine this panel with the map so that the station group locations are evident.
+
+https://cran.r-project.org/web/packages/egg/vignettes/Ecosystem.html
+
+```{r multi-plot-page}
+
+panel <- grid.arrange(samples_mo_yr_station_facet, station_locs_plot, nrow = 2)
+
+ggsave(panel, file = "pdf_outputs/station_grps_panel.pdf", height = 10, width = 6)
+```
+
+Now use the map in addition?
+
+```{r multi-plot-page2}
+# add the map as well
+panel3 <- grid.arrange(samples_mo_yr_station_facet, station_locs_plot, map.fig, nrow = 3)
+
+ggsave(panel3, file = "pdf_outputs/station_grps_panel3.pdf", height = 10, width = 6)
+```
+
+This can be refined by:
+1. modifying the colors/groups to display in the map
+2. adding labels to the map rather than using the plot?
+
+
+## Spring vs. late summer
+
+Seasonal changes was one question that Ali, Wes, and I discussed looking at with these data.
+So the question would be, how many samples fall into those categories by year?
+
+```{r}
+season_df <- rockfish_df %>%
+  mutate(season = ifelse(Month %in% c(4,5,6), "spring", "late_summer")) %>%
+  group_by(season, Year) %>%
+  summarise(samples = sum(Number)) 
+
+season_df$season <- factor(season_df$season, levels = c("spring", "late_summer"))
+season_df$Year <- factor(season_df$Year)
+
+season_df %>%
+  count(season, Year, samples) %>%
+  complete(season, Year) %>% # another counting issue to keep the x-axis consistent
+  ggplot() +
+  geom_bar(aes(x = Year, y = samples, fill = season), stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette = "Dark2")
+
+```
+
+
+What about treating April differently from June?
+```{r}
+rockfish_df$Year <- factor(rockfish_df$Year)
+rockfish_df$Month <- factor(rockfish_df$Month)
+
+rockfish_df %>%
+  group_by(Year, Month) %>%
+  summarise(n_samples = sum(Number)) %>%
+  # count the missing entries
+  count(Year, Month, n_samples) %>%
+  complete(Year, Month) %>%
+  ggplot() +
+  geom_bar(aes(x = Month, y = n_samples, fill = Month), stat = "identity", position = "dodge") +
+  facet_grid(rows = vars(Year), scales = "free_y") +
+  theme(
+    legend.position = "bottom"
+  ) +
+  scale_fill_brewer(palette = "Dark2")
+  
+
+ggsave("pdf_outputs/samples_by_year_month.pdf", width = )
+```
+
+
+If we have ~1000 samples to genotype initially, there are a couple of things I would do:
+1. look at composition over the longest time period available (April-August)
+2. look at changes in composition across years using best available comparative data (May/June)
+3. ignore spatial distribution (for now?)
+
+Assume ~100 samples per Month/Year... how many samples in each category?
+
+April 2013 (927)*
+May 2011 (759)*
+June 2011 (28)
+July 2012 (1277)*
+August 2012 (99)
+
+May 2009 (26)
+June 2009 (7)
+June 2011 (28)
+May 2015 (1022)*
+June 2015 (645)*
+
+*downsample these
+
+```{r}
+rockfish_df %>%
+  group_by(Year, Month) %>%
+  summarise(n_samples = sum(Number)) %>%
+  
+```
+
+## Spatial distribution of samples
+
+Based on Goldstein et al., 2019, I could look at the Eastern and Western Gulf of Alaska, with a biogeographic break at -146 degrees (Prince William Sound).
+
+```{r}
+# how many samples are available for the different regions for the time periods of interest, above?
+goa_region <- rockfish_spatial_df %>%
+  mutate(spatial_area = ifelse(lon < -146, "EGOA", "WGOA")) 
+
+goa_region$Year <- factor(goa_region$Year)
+goa_region$Month <- factor(goa_region$Month)
+goa_region$spatial_area <- factor(goa_region$spatial_area)
+
+# plot that up
+region_sample_ct <- goa_region %>%
+  group_by(Year, Month, spatial_area) %>%
+  summarise(n_samples = sum(Number)) %>%
+  # count the missing entries
+  count(Year, Month, n_samples, spatial_area) %>%
+  complete(Year, Month, spatial_area) %>%
+  ggplot() +
+  geom_bar(aes(x = spatial_area, y = n_samples, fill = spatial_area), stat = "identity", position = "dodge") +
+  facet_grid(rows = vars(Year), cols = vars(Month), labeller = labeller(Month = month.labs), scales = "free_y") +
+  theme(
+    legend.position = "bottom"
+  ) +
+  scale_fill_manual(values = c("dark blue", "goldenrod"))
+  
+ggsave("pdf_outputs/EastWest_regions_sample_ct.pdf", width = 5, height = 6)
+```
+
+Can I get that info onto the map?
+
+```{r plot-GoA-regions}
+# organize the color palette
+region_cols <- c("goldenrod", "dark blue")[goa_region$spatial_area]
+  
+# plot station locations
+plot(coastlineWorldFine, clon = mlon, clat = mlat, span = 1100, 
+     projection="+proj=aea +lat_1=55 +lat_2=65 +lat_0=50 +lon_0=-154", col = 'lightgrey')
+
+# plot bathymetry
+mapContour(bathyLon, bathyLat, bathyZ,
+           levels = c(-500, -1000, -2500),
+           lwd = c(1.5, 1, 1),
+           lty = c(3, 1, 3),
+           col = 'darkgray')
+
+# add GoA locations
+mapPoints(longitude = goa_region$lon, latitude = goa_region$lat, pch = 19, col = region_cols, cex = 0.5, lwd = 2)
+title(xlab = "Longitude", ylab = "Latitude")
+
+# to save that output as an object
+grid.echo()
+map.fig_regions <- grid.grab()
+
+```
+
+And put those two things together as a panel:
+```{r panel-the-regions}
+# add the map and barplot
+GoA_regions_panel <- grid.arrange(map.fig_regions, region_sample_ct, nrow = 1)
+
+ggsave(GoA_regions_panel, file = "pdf_outputs/GoA_regions_panel.pdf", height = 5, width = 11)
+
+```
+
+
+
+
+
+
+## Messing around with mapping
+
+convert to a projection that is more appropriate for AK
+```{r reproject-datapoints}
+coast_tr <- st_transform(structure(coast, proj4string = "+proj=longlat +datum=WGS84 +no_defs"), crs = "+proj=aea +lat_1=55 +lat_2=65 +lat_0=50 +lon_0=-154")
+
+
+```
+
+
+
+
+```{r}
+ggplot(data = coast_tr) +
+    geom_sf() +
+    coord_sf()
+    #coord_sf(xlim = c(-180,-130), ylim = c(45,70), expand = T)
+
+```
+
+```{r}
+ne_coastline()
+
+lakes110 <- ne_download(scale = 110, type = 'lakes', category = 'physical')
+
+coasts <- ne_download(scale = 110, type = 'coastline', category = 'physical')
+```
+
+
+```{r}
+# what's the best map for my area?
+coastlineBest(lonRange = c(-180,-130), latRange = c(45,70), debug = 1)
+```
+
+```{r}
+
+?coastlineWorldMedium
+
+data(coastlineWorldMedium, package="ocedata")
+
+sp::plot(coastlineWorldMedium)
+sp::plot(ne_coastline())
+# coastline of the world
+# subsetting of coastline is not possible because the Natural Earth data are not attributed in that way
+```
+
+```{r}
+st_crs(ne_coastline())
+
+str(ne_coastline)
+
+coasts <- ne_coastline(scale = 100, type = " ", returnclass = "sf")
+
+ggplot(data = coasts) +
+  geom_sf(fill = "grey", colour = "black") +
+  coord_sf()
+```
+
+```{r}
+library(rnaturalearth)
+library(sf)
+library(ggplot2) # with support for geom_sf
+
+# all countries at scale 10m
+ctrys <- ne_countries(scale = 10, type = "countries", returnclass = "sf")
+
+crsLONGLAT <- "+proj=longlat +datum=WGS84 +no_defs"
+crsLAEA <- "+proj=laea +lat_0=55 +lon_0=-170 +x_0=4321000 +y_0=3210000 +datum=WGS84 +units=m +no_defs"
+
+# the bouding box polygon in long/lat projection, i.e. axis-aligned
+bb <- st_sfc(
+  st_polygon(list(cbind(
+    c(-42, 52, 52, -42, -42), # x-coordinates (longitudes) of points A,B,C,D
+    c(12, 12, 84, 84, 12)     # y-coordinates (latitudes) of points A,B,C,D
+    ))),
+  crs = crsLONGLAT)
+
+
+# now in in LAEA projection
+laeabb <- st_transform(bb, crs = crsLAEA)
+
+# the extent of the bounding box in the new projection
+b <- st_bbox(laeabb)
+b
+
+gg2 <- ggplot(data = coasts) +
+  geom_sf(fill = "grey", colour = "black") +
+  coord_sf()
+
+
+  coord_sf(crs = crsLAEA, xlim = c(b["xmin"], b["xmax"]), ylim = c(b["ymin"], b["ymax"]))
+gg2
 ```
 
